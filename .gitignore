@@ -1,0 +1,6 @@
+*
+
+!.gitignore
+!ble_midi/*
+!ble_midi
+!main.c
