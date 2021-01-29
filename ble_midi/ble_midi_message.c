@@ -18,7 +18,7 @@ void post_ble_midi_message(ble_midi_session_t* session, uint8_t* message, uint8_
 
 	ble_midi_message_t ble_message;
 	ble_message.len = len;
-	memcpy(ble_message.p_data, message, len); // for now assume all messages have a status byte
+	memcpy(ble_message.p_data, message, len);     // for now assume all messages have a status byte
 	ble_message.timestamp_low = 0x7F & session->timestamp;
 	
 	memcpy(&session->messages[session->messages_len], &ble_message, sizeof(ble_midi_message_t));
@@ -52,6 +52,10 @@ uint16_t get_ble_midi_packet(ble_midi_session_t* session, uint8_t* buffer) {
 void flush_ble_midi_session(ble_midi_session_t* session) {
 	memset(session->messages, 0, sizeof(ble_midi_message_t) * MIDI_MAX_MESSAGES_PER_PACKET);
 	session->messages_len = 0;
+}
+
+int has_ble_midi_messages(ble_midi_session_t* session) {
+	return session->messages_len;
 }
 
 static int is_status_byte(uint8_t byte) {

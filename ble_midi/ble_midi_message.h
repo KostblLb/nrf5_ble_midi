@@ -50,6 +50,10 @@ uint16_t get_ble_midi_packet(ble_midi_session_t* session, uint8_t* buffer);
 */
 void flush_ble_midi_session(ble_midi_session_t* session);
 
+/** @brief checks if the session has any messages to send;
+*/
+int has_ble_midi_messages(ble_midi_session_t* session);
+
 #ifdef __cplusplus
 }
 #endif

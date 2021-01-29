@@ -135,14 +135,14 @@ uint32_t ble_midi_init(ble_midi_t * p_midi, const ble_midi_init_t * p_midi_init)
 }
 
 
-uint32_t ble_midi_on_message(uint16_t conn_handle, ble_midi_t * p_midi, uint8_t * message, uint16_t len)
+uint32_t ble_midi_send_packet(uint16_t conn_handle, ble_midi_t * p_midi, uint8_t * packet, uint16_t len)
 {
     ble_gatts_hvx_params_t params;
 
     memset(&params, 0, sizeof(params));
     params.type   = BLE_GATT_HVX_NOTIFICATION;
     params.handle = p_midi->io_char_handles.value_handle;
-    params.p_data = message;
+    params.p_data = packet;
     params.p_len  = &len;
 
     return sd_ble_gatts_hvx(conn_handle, &params);

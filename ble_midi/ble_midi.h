@@ -124,12 +124,12 @@ void ble_midi_on_ble_evt(ble_evt_t const * p_ble_evt, void * p_context);
  *
  ' @param[in] conn_handle   Handle of the peripheral connection to which the MIDI message notification will be sent.
  * @param[in] p_midi 				MIDI Service structure.
- * @param[in] message  			MIDI message.
+ * @param[in] packet 				BLE-MIDI packet.
  * @param[in] len           Length of the MIDI message.
  *
  * @retval NRF_SUCCESS If the notification was sent successfully. Otherwise, an error code is returned.
  */
-uint32_t ble_midi_on_message(uint16_t conn_handle, ble_midi_t * p_midi, uint8_t * message, uint16_t len);
+uint32_t ble_midi_send_packet(uint16_t conn_handle, ble_midi_t * p_midi, uint8_t * packet, uint16_t len);
 
 #ifdef __cplusplus
 }

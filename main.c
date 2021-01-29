@@ -92,7 +92,7 @@
 
 
 #define MIN_CONN_INTERVAL               MSEC_TO_UNITS(10, UNIT_1_25_MS)         /**< Minimum acceptable connection interval (0.5 seconds). */
-#define MAX_CONN_INTERVAL               MSEC_TO_UNITS(100, UNIT_1_25_MS)         /**< Maximum acceptable connection interval (1 second). */
+#define MAX_CONN_INTERVAL               MSEC_TO_UNITS(15, UNIT_1_25_MS)         /**< Maximum acceptable connection interval (1 second). */
 #define SLAVE_LATENCY                   0                                       /**< Slave latency. */
 #define CONN_SUP_TIMEOUT                MSEC_TO_UNITS(4000, UNIT_10_MS)         /**< Connection supervisory time-out (4 seconds). */
 
@@ -100,7 +100,7 @@
 #define NEXT_CONN_PARAMS_UPDATE_DELAY   APP_TIMER_TICKS(5000)                   /**< Time between each call to sd_ble_gap_conn_param_update after the first call (5 seconds). */
 #define MAX_CONN_PARAMS_UPDATE_COUNT    3                                       /**< Number of attempts before giving up the connection parameter negotiation. */
 
-#define BUTTON_DETECTION_DELAY          APP_TIMER_TICKS(50)                     /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
+#define BUTTON_DETECTION_DELAY          APP_TIMER_TICKS(10)                     /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
 
 #define DEAD_BEEF                       0xDEADBEEF                              /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
@@ -495,32 +495,18 @@ uint8_t MIDI_MESSAGE_NOTE_OFF[] = { 0x80, 0x24, 0x00 };
  */
 static void button_event_handler(uint8_t pin_no, uint8_t button_action)
 {
-    ret_code_t err_code;
-		uint8_t* message = NULL;
+    //ret_code_t err_code;
 	  size_t len = 0;
-		uint16_t packet_len = 0;
 
     switch (pin_no)
     {
         case LEDBUTTON_BUTTON:
             NRF_LOG_INFO("Send button state change.");
 						
-						message = button_action ? MIDI_MESSAGE_NOTE_ON : MIDI_MESSAGE_NOTE_OFF;
 						len = sizeof(MIDI_MESSAGE_NOTE_ON);
 							
-						post_ble_midi_message(&m_ble_midi_session, message, len);
-						packet_len = get_ble_midi_packet(&m_ble_midi_session, m_ble_midi_session_buffer);
-					
-            err_code = ble_midi_on_message(m_conn_handle, &m_midi, m_ble_midi_session_buffer, packet_len);
-            if (err_code != NRF_SUCCESS &&
-                err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
-                err_code != NRF_ERROR_INVALID_STATE &&
-                err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-            {
-                APP_ERROR_CHECK(err_code);
-            }
-						
-						flush_ble_midi_session(&m_ble_midi_session);
+						post_ble_midi_message(&m_ble_midi_session, MIDI_MESSAGE_NOTE_ON, len);
+						post_ble_midi_message(&m_ble_midi_session, MIDI_MESSAGE_NOTE_OFF, len);
 
             break;
 
@@ -580,6 +566,48 @@ static void idle_state_handle(void)
     }
 }
 
+/**@brief Function for initializing Radio Notification Software Interrupts.
+ */
+void radio_notification_init(uint32_t irq_priority, uint8_t notification_type, uint8_t notification_distance)
+{
+    uint32_t err_code;
+
+    err_code = sd_nvic_ClearPendingIRQ(SWI1_IRQn);
+    APP_ERROR_CHECK(err_code);
+
+    err_code = sd_nvic_SetPriority(SWI1_IRQn, irq_priority);
+    APP_ERROR_CHECK(err_code);
+
+    err_code = sd_nvic_EnableIRQ(SWI1_IRQn);
+    APP_ERROR_CHECK(err_code);
+
+    // Configure the event
+    err_code = sd_radio_notification_cfg_set(notification_type, notification_distance);
+		
+		APP_ERROR_CHECK(err_code);
+}
+
+/**@brief Software interrupt 1 IRQ Handler, handles radio notification interrupts.
+ */
+void SWI1_IRQHandler(bool radio_evt)
+{
+		uint32_t err_code;
+    if (radio_evt)
+    {
+				if (has_ble_midi_messages(&m_ble_midi_session)) {
+					NRF_LOG_INFO("Getting MIDI packet to send...1");
+					uint8_t packet_len = get_ble_midi_packet(&m_ble_midi_session, m_ble_midi_session_buffer);
+					NRF_LOG_INFO("Getting MIDI packet to send...2");
+					err_code = ble_midi_send_packet(m_conn_handle, &m_midi, m_ble_midi_session_buffer, packet_len);
+					NRF_LOG_INFO("Getting MIDI packet to send...3");
+					APP_ERROR_CHECK(err_code);
+					flush_ble_midi_session(&m_ble_midi_session);
+					NRF_LOG_INFO("Flushin...");
+				}
+				nrf_gpio_pin_toggle(BSP_LED_2); //Toggle the status of the LED on each radio notification event
+    }
+}
+
 
 /**@brief Function for application main entry.
  */
@@ -597,6 +625,7 @@ int main(void)
     services_init();
     advertising_init();
     conn_params_init();
+		radio_notification_init(3, NRF_RADIO_NOTIFICATION_TYPE_INT_ON_ACTIVE, NRF_RADIO_NOTIFICATION_DISTANCE_800US);
 
     // Start execution.
     NRF_LOG_INFO("MIDI device started.");
