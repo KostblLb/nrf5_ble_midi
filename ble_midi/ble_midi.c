@@ -46,6 +46,7 @@
 #include "ble_midi.h"
 #include "ble_srv_common.h"
 #include "nrf_log.h"
+#include "app_error.h"
 
 
 /**@brief Function for handling the Write event.
@@ -144,6 +145,6 @@ uint32_t ble_midi_send_packet(uint16_t conn_handle, ble_midi_t * p_midi, uint8_t
     params.handle = p_midi->io_char_handles.value_handle;
     params.p_data = packet;
     params.p_len  = &len;
-
-    return sd_ble_gatts_hvx(conn_handle, &params);
+	
+		return sd_ble_gatts_hvx(conn_handle, &params);
 }

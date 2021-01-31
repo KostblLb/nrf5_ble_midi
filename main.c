@@ -104,6 +104,9 @@
 
 #define DEAD_BEEF                       0xDEADBEEF                              /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
+#define APP_TIMER_MS(TICKS) ((uint64_t)ROUNDED_DIV(                  \
+            (TICKS) * 1000 * (APP_TIMER_CONFIG_RTC_FREQUENCY + 1),   \
+            (uint32_t)APP_TIMER_CLOCK_FREQ))																		/**< Macro to convert from ticks to milliseconds. **/
 
 BLE_MIDI_DEF(m_midi);																														/**< MIDI service instance */
 NRF_BLE_GATT_DEF(m_gatt);                                                       /**< GATT module instance. */
@@ -115,6 +118,7 @@ static uint8_t m_adv_handle = BLE_GAP_ADV_SET_HANDLE_NOT_SET;                   
 static uint8_t m_enc_advdata[BLE_GAP_ADV_SET_DATA_SIZE_MAX];                    /**< Buffer for storing an encoded advertising set. */
 static uint8_t m_enc_scan_response_data[BLE_GAP_ADV_SET_DATA_SIZE_MAX];         /**< Buffer for storing an encoded scan data. */
 
+app_timer_id_t m_ble_midi_timer;
 ble_midi_session_t m_ble_midi_session;
 uint8_t m_ble_midi_session_buffer[MIDI_MAX_PACKET_SIZE];
 
@@ -161,6 +165,8 @@ static void leds_init(void)
 }
 
 
+static void app_timer_timeout_handler(void * p_context) {}
+
 /**@brief Function for the Timer initialization.
  *
  * @details Initializes the timer module.
@@ -170,6 +176,11 @@ static void timers_init(void)
     // Initialize timer module, making it use the scheduler
     ret_code_t err_code = app_timer_init();
     APP_ERROR_CHECK(err_code);
+	
+		err_code = app_timer_create(&m_ble_midi_timer, APP_TIMER_MODE_REPEATED, app_timer_timeout_handler);
+		APP_ERROR_CHECK(err_code);
+		err_code = app_timer_start(m_ble_midi_timer, UINT32_MAX, NULL);
+		APP_ERROR_CHECK(err_code);
 }
 
 
@@ -385,8 +396,6 @@ static void advertising_start(void)
 static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
 {
     ret_code_t err_code;
-	
-	NRF_LOG_INFO("ble_evt_handler %x", p_ble_evt->header.evt_id)
 
     switch (p_ble_evt->header.evt_id)
     {
@@ -459,6 +468,26 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
     }
 }
 
+/**@brief Function for initializing Radio Notification Software Interrupts.
+ */
+void radio_notification_init(uint32_t irq_priority, uint8_t notification_type, uint8_t notification_distance)
+{
+    uint32_t err_code;
+
+    err_code = sd_nvic_ClearPendingIRQ(SWI1_IRQn);
+    APP_ERROR_CHECK(err_code);
+
+    err_code = sd_nvic_SetPriority(SWI1_IRQn, irq_priority);
+    APP_ERROR_CHECK(err_code);
+
+    err_code = sd_nvic_EnableIRQ(SWI1_IRQn);
+    APP_ERROR_CHECK(err_code);
+
+    // Configure the event
+    err_code = sd_radio_notification_cfg_set(notification_type, notification_distance);
+		
+		APP_ERROR_CHECK(err_code);
+}
 
 /**@brief Function for initializing the BLE stack.
  *
@@ -476,6 +505,10 @@ static void ble_stack_init(void)
     uint32_t ram_start = 0;
     err_code = nrf_sdh_ble_default_cfg_set(APP_BLE_CONN_CFG_TAG, &ram_start);
     APP_ERROR_CHECK(err_code);
+	
+		// if priority is 3, then no debug info will be available on radio event callback fault
+		// https://devzone.nordicsemi.com/f/nordic-q-a/66392/radio-notification-event-handler-and-sd_ble_gatts_hvx
+		radio_notification_init(6, NRF_RADIO_NOTIFICATION_TYPE_INT_ON_ACTIVE, NRF_RADIO_NOTIFICATION_DISTANCE_800US);
 
     // Enable BLE stack.
     err_code = nrf_sdh_ble_enable(&ram_start);
@@ -495,19 +528,15 @@ uint8_t MIDI_MESSAGE_NOTE_OFF[] = { 0x80, 0x24, 0x00 };
  */
 static void button_event_handler(uint8_t pin_no, uint8_t button_action)
 {
-    //ret_code_t err_code;
 	  size_t len = 0;
-
+		uint8_t* message = 0;
+		
     switch (pin_no)
     {
         case LEDBUTTON_BUTTON:
-            NRF_LOG_INFO("Send button state change.");
-						
 						len = sizeof(MIDI_MESSAGE_NOTE_ON);
-							
-						post_ble_midi_message(&m_ble_midi_session, MIDI_MESSAGE_NOTE_ON, len);
-						post_ble_midi_message(&m_ble_midi_session, MIDI_MESSAGE_NOTE_OFF, len);
-
+						message = button_action ? MIDI_MESSAGE_NOTE_ON : MIDI_MESSAGE_NOTE_OFF;
+						post_ble_midi_message(&m_ble_midi_session, message, len, APP_TIMER_MS(app_timer_cnt_get()));
             break;
 
         default:
@@ -566,46 +595,35 @@ static void idle_state_handle(void)
     }
 }
 
-/**@brief Function for initializing Radio Notification Software Interrupts.
- */
-void radio_notification_init(uint32_t irq_priority, uint8_t notification_type, uint8_t notification_distance)
-{
-    uint32_t err_code;
-
-    err_code = sd_nvic_ClearPendingIRQ(SWI1_IRQn);
-    APP_ERROR_CHECK(err_code);
-
-    err_code = sd_nvic_SetPriority(SWI1_IRQn, irq_priority);
-    APP_ERROR_CHECK(err_code);
-
-    err_code = sd_nvic_EnableIRQ(SWI1_IRQn);
-    APP_ERROR_CHECK(err_code);
-
-    // Configure the event
-    err_code = sd_radio_notification_cfg_set(notification_type, notification_distance);
-		
-		APP_ERROR_CHECK(err_code);
-}
-
 /**@brief Software interrupt 1 IRQ Handler, handles radio notification interrupts.
  */
 void SWI1_IRQHandler(bool radio_evt)
 {
-		uint32_t err_code;
+		uint32_t err_code = NRF_SUCCESS;
     if (radio_evt)
     {
 				if (has_ble_midi_messages(&m_ble_midi_session)) {
-					NRF_LOG_INFO("Getting MIDI packet to send...1");
 					uint8_t packet_len = get_ble_midi_packet(&m_ble_midi_session, m_ble_midi_session_buffer);
-					NRF_LOG_INFO("Getting MIDI packet to send...2");
 					err_code = ble_midi_send_packet(m_conn_handle, &m_midi, m_ble_midi_session_buffer, packet_len);
-					NRF_LOG_INFO("Getting MIDI packet to send...3");
-					APP_ERROR_CHECK(err_code);
+					
+					if (err_code == BLE_ERROR_GATTS_SYS_ATTR_MISSING) {
+						err_code = sd_ble_gatts_sys_attr_set(m_conn_handle, NULL, 0, 0);
+						APP_ERROR_CHECK(err_code);
+						
+						// Try again
+						err_code = ble_midi_send_packet(m_conn_handle, &m_midi, m_ble_midi_session_buffer, packet_len);
+					}
+					
+					if (err_code != NRF_SUCCESS &&
+						err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
+						err_code != NRF_ERROR_INVALID_STATE &&
+						err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
+					{
+							APP_ERROR_CHECK(err_code);
+					}
 					flush_ble_midi_session(&m_ble_midi_session);
-					NRF_LOG_INFO("Flushin...");
 				}
-				nrf_gpio_pin_toggle(BSP_LED_2); //Toggle the status of the LED on each radio notification event
-    }
+			}
 }
 
 
@@ -625,7 +643,6 @@ int main(void)
     services_init();
     advertising_init();
     conn_params_init();
-		radio_notification_init(3, NRF_RADIO_NOTIFICATION_TYPE_INT_ON_ACTIVE, NRF_RADIO_NOTIFICATION_DISTANCE_800US);
 
     // Start execution.
     NRF_LOG_INFO("MIDI device started.");

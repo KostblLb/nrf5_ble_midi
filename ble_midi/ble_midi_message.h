@@ -39,7 +39,7 @@ ble_midi_session_t create_ble_midi_session(void);
 /**
 	@param message, including status byte
 */
-void post_ble_midi_message(ble_midi_session_t* session, uint8_t* message, uint8_t len);
+void post_ble_midi_message(ble_midi_session_t* session, uint8_t* message, uint8_t len, uint64_t posting_time);
 
 /** @brief writes a BLE-MIDI packet to a buffer
 		@returns written data length

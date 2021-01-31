@@ -11,30 +11,25 @@ ble_midi_session_t create_ble_midi_session() {
 	return session;
 }
 
-void post_ble_midi_message(ble_midi_session_t* session, uint8_t* message, uint8_t len) {
-	NRF_LOG_INFO("Posting MIDI message:");
-	NRF_LOG_HEXDUMP_INFO(message, len);
-	session->timestamp += 0;											// for now assume all messages come without latency
+void post_ble_midi_message(ble_midi_session_t* session, uint8_t* message, uint8_t len, uint64_t posting_time) {
+	if (!session->messages_len) {
+		session->timestamp = 0x1FFF & posting_time; // keep the last 13 bits as the packet timestamp
+	}
 
 	ble_midi_message_t ble_message;
 	ble_message.len = len;
-	memcpy(ble_message.p_data, message, len);     // for now assume all messages have a status byte
-	ble_message.timestamp_low = 0x7F & session->timestamp;
+	memcpy(ble_message.p_data, message, len);
+	ble_message.timestamp_low = 0x7F & posting_time;
 	
 	memcpy(&session->messages[session->messages_len], &ble_message, sizeof(ble_midi_message_t));
 	session->messages_len++;
 }
 
 uint16_t get_ble_midi_packet(ble_midi_session_t* session, uint8_t* buffer) {
-	NRF_LOG_INFO("Getting MIDI packet, summary:");
-	NRF_LOG_INFO("messages len:\t%d;\n", session->messages_len);
-	
 	buffer[0] = (1 << 7) | (session->timestamp >> 7); // that's the packet's header
 	int i = 1;
 	for (int msg_idx = 0; msg_idx < session->messages_len; msg_idx++) {
 		ble_midi_message_t msg = session->messages[msg_idx];
-		NRF_LOG_INFO("message [%d] (len: %d):", msg_idx, msg.len);
-		NRF_LOG_HEXDUMP_INFO(msg.p_data, msg.len);
 		buffer[i] = 1 << 7 | msg.timestamp_low;
 		i++;
 		
